@@ -17,11 +17,15 @@ import { Input } from "@/components/ui/input";
 import {
   Sidebar,
   SidebarContent,
+  SidebarFooter,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
+import { NavUser } from "@/components/nav-user";
+import { authClient } from "@/lib/auth-client";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -40,7 +44,7 @@ import {
 } from "@/components/ui/dialog";
 
 export function AppSidebar({
-  boards,
+  boards = [],
   currentBoardId,
   onSelectBoard,
   onAddBoard,
@@ -86,6 +90,15 @@ export function AppSidebar({
     }
   };
 
+  const { data: activeOrg, isPending: isOrgLoading } =
+    authClient.useActiveOrganization();
+
+  if (!boards) {
+    console.log("AppSidebar: boards is undefined");
+  } else {
+    console.log("AppSidebar: rendering with", boards.length, "boards");
+  }
+
   return (
     <Sidebar variant="inset">
       <SidebarHeader>
@@ -97,7 +110,13 @@ export function AppSidebar({
                   <LayoutDashboard className="size-4" />
                 </div>
                 <div className="grid flex-1 text-left text-sm leading-tight">
-                  <span className="truncate font-semibold">BTO Marketing</span>
+                  {isOrgLoading ? (
+                    <Skeleton className="h-4 w-32" />
+                  ) : (
+                    <span className="truncate font-semibold">
+                      {activeOrg?.name || "No Organization"}
+                    </span>
+                  )}
                 </div>
               </div>
             </SidebarMenuButton>
@@ -158,105 +177,116 @@ export function AppSidebar({
           </Dialog>
 
           <div className="space-y-2">
-            {boards.map((board, index) => (
-              <div
-                key={board.id}
-                className={`p-2 rounded-lg border ${
-                  currentBoardId === board.id
-                    ? "bg-sidebar-accent border-sidebar-border"
-                    : "bg-sidebar-background border-sidebar-border"
-                }`}
-              >
-                <div className="flex items-center justify-between">
-                  {editingBoardId === board.id ? (
-                    <div className="flex items-center gap-2 flex-1 h-full">
-                      <Input
-                        value={boardName}
-                        onChange={(e) => setBoardName(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") handleSaveBoard();
-                          if (e.key === "Escape") {
-                            setEditingBoardId(null);
-                            setBoardName("");
-                          }
-                        }}
-                        className="h-8 flex-1 text-sm"
-                        autoFocus
-                      />
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={handleSaveBoard}
-                        className="h-8 px-2"
-                      >
-                        <X className="h-3 w-3" />
-                      </Button>
-                    </div>
-                  ) : (
-                    <div className="flex items-center w-full h-full">
-                      <button
-                        onClick={() => onSelectBoard(board.id)}
-                        className="flex-1 text-left text-sm font-medium text-sidebar-foreground hover:text-sidebar-foreground/80 h-full flex items-center"
-                        style={{ minHeight: "2rem" }}
-                      >
-                        {board.name}
-                      </button>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-6 w-6 p-0 flex items-center justify-center"
-                          >
-                            <MoreVertical className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem
-                            disabled={index === 0}
-                            onClick={() =>
-                              onReorderBoards &&
-                              onReorderBoards(index, index - 1)
+            {boards && boards.length > 0 ? (
+              boards.map((board, index) => (
+                <div
+                  key={board.id}
+                  className={`p-2 rounded-lg border ${
+                    currentBoardId === board.id
+                      ? "bg-sidebar-accent border-sidebar-border"
+                      : "bg-sidebar-background border-sidebar-border"
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    {editingBoardId === board.id ? (
+                      <div className="flex items-center gap-2 flex-1 h-full">
+                        <Input
+                          value={boardName}
+                          onChange={(e) => setBoardName(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") handleSaveBoard();
+                            if (e.key === "Escape") {
+                              setEditingBoardId(null);
+                              setBoardName("");
                             }
-                          >
-                            <ArrowUp className="h-4 w-4 mr-2" />
-                            Move up
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            disabled={index === boards.length - 1}
-                            onClick={() =>
-                              onReorderBoards &&
-                              onReorderBoards(index, index + 1)
-                            }
-                          >
-                            <ArrowDown className="h-4 w-4 mr-2" />
-                            Move down
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem
-                            onClick={() => handleEditBoard(board)}
-                          >
-                            <Edit2 className="h-4 w-4 mr-2" />
-                            Edit
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            onClick={() => handleDeleteBoard(board.id)}
-                            className="text-red-600"
-                          >
-                            <Trash2 className="h-4 w-4 mr-2" />
-                            Delete
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </div>
-                  )}
+                          }}
+                          className="h-8 flex-1 text-sm"
+                          autoFocus
+                        />
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={handleSaveBoard}
+                          className="h-8 px-2"
+                        >
+                          <X className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center w-full h-full">
+                        <button
+                          onClick={() => onSelectBoard(board.id)}
+                          className="flex-1 text-left text-sm font-medium text-sidebar-foreground hover:text-sidebar-foreground/80 h-full flex items-center"
+                          style={{ minHeight: "2rem" }}
+                        >
+                          {board.name}
+                        </button>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-6 w-6 p-0 flex items-center justify-center"
+                            >
+                              <MoreVertical className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem
+                              disabled={index === 0}
+                              onClick={() =>
+                                onReorderBoards &&
+                                onReorderBoards(index, index - 1)
+                              }
+                            >
+                              <ArrowUp className="h-4 w-4 mr-2" />
+                              Move up
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              disabled={index === boards.length - 1}
+                              onClick={() =>
+                                onReorderBoards &&
+                                onReorderBoards(index, index + 1)
+                              }
+                            >
+                              <ArrowDown className="h-4 w-4 mr-2" />
+                              Move down
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              onClick={() => handleEditBoard(board)}
+                            >
+                              <Edit2 className="h-4 w-4 mr-2" />
+                              Edit
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={() => handleDeleteBoard(board.id)}
+                              className="text-red-600"
+                            >
+                              <Trash2 className="h-4 w-4 mr-2" />
+                              Delete
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
+                    )}
+                  </div>
+                  {/* Group management and add group button removed as per instructions */}
                 </div>
-                {/* Group management and add group button removed as per instructions */}
+              ))
+            ) : (
+              <div className="p-4 text-center">
+                <p className="text-sm text-muted-foreground">
+                  No boards yet. Click "Add Board" to create one!
+                </p>
               </div>
-            ))}
+            )}
           </div>
         </div>
       </SidebarContent>
+      <SidebarFooter>
+        <NavUser />
+      </SidebarFooter>
     </Sidebar>
   );
 }

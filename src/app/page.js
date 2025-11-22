@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { Board } from "@/components/board/Board";
 import { AppSidebar } from "@/components/Sidebar";
 import {
@@ -14,14 +15,28 @@ import {
   COLUMN_TYPES,
   DEFAULT_COLUMNS,
 } from "@/lib/board-data";
+import { authClient } from "@/lib/auth-client";
+import { Skeleton } from "@/components/ui/skeleton";
 
 const STORAGE_KEY = "orderly_flow_boards";
 const CURRENT_BOARD_KEY = "orderly_flow_current_board";
 
 export default function Home() {
+  const router = useRouter();
+  const { data: session } = authClient.useSession();
+  const { data: activeOrg, isPending: isOrgLoading } =
+    authClient.useActiveOrganization();
   const [mounted, setMounted] = useState(false);
   const [boards, setBoards] = useState(createInitialBoards());
   const [currentBoardId, setCurrentBoardId] = useState(null);
+
+  // Check if user has an active organization
+  useEffect(() => {
+    if (session && !isOrgLoading && !activeOrg) {
+      // User is authenticated but has no active organization
+      router.push("/create-organization");
+    }
+  }, [session, activeOrg, isOrgLoading, router]);
 
   // Load from localStorage only after mounting (client-side only)
   useEffect(() => {
@@ -168,8 +183,25 @@ export default function Home() {
     });
   };
 
+  // Show loading state while checking organization
+  if (isOrgLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="text-center space-y-4">
+          <Skeleton className="h-12 w-64 mx-auto" />
+          <Skeleton className="h-4 w-48 mx-auto" />
+        </div>
+      </div>
+    );
+  }
+
+  // Don't render anything if no organization (will redirect)
+  if (!activeOrg) {
+    return null;
+  }
+
   return (
-    <SidebarProvider>
+    <SidebarProvider defaultOpen={true}>
       <AppSidebar
         boards={boards}
         currentBoardId={currentBoardId}
@@ -177,9 +209,6 @@ export default function Home() {
         onAddBoard={handleAddBoard}
         onUpdateBoard={handleUpdateBoard}
         onDeleteBoard={handleDeleteBoard}
-        onAddGroup={handleAddGroup}
-        onUpdateGroup={handleUpdateGroup}
-        onDeleteGroup={handleDeleteGroup}
         onReorderBoards={handleReorderBoards}
       />
       <SidebarInset>
