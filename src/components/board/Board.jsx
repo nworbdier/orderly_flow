@@ -7,17 +7,87 @@ import { Button } from "@/components/ui/button";
 import { Group } from "./Group";
 import { ColumnHeader } from "./ColumnHeader";
 import { ImportDialog } from "./ImportDialog";
+import { UpdatesSidebar } from "./UpdatesSidebar";
+import { ViewSwitcher } from "./ViewSwitcher";
+import { DailyBriefView } from "./DailyBriefView";
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
 
 export function Board({ initialBoard, onBoardChange }) {
   const [board, setBoard] = useState(initialBoard);
   const [editingItem, setEditingItem] = useState(null);
   const [editingColumn, setEditingColumn] = useState(null);
-  // Start with all items collapsed by default
-  const [allExpanded, setAllExpanded] = useState(false);
+  // Track expand/collapse state - start with all collapsed
+  const [expandCollapseState, setExpandCollapseState] = useState({
+    groups: {},  // { groupId: boolean }
+    items: {},   // { itemId: boolean }
+  });
+  const [updatesSidebar, setUpdatesSidebar] = useState(null);
+  const [currentView, setCurrentView] = useState("main"); // "main" or "daily-brief"
+  const [boardPeople, setBoardPeople] = useState([]); // People from database
+  const [orgMembers, setOrgMembers] = useState([]); // Organization members
+
+  // Drag and drop sensors
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8, // 8px of movement required to start drag
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
 
   useEffect(() => {
     setBoard(initialBoard);
+    // Load people from database
+    loadPeople();
+    // Load organization members
+    loadOrgMembers();
   }, [initialBoard]);
+
+  const loadPeople = async () => {
+    try {
+      const response = await fetch(`/api/boards/${initialBoard.id}/people`);
+      if (response.ok) {
+        const people = await response.json();
+        setBoardPeople(people);
+      }
+    } catch (error) {
+      console.error("Error loading people:", error);
+    }
+  };
+
+  const loadOrgMembers = async () => {
+    try {
+      // Get organization ID from board
+      const organizationId = initialBoard.organizationId;
+      if (!organizationId) return;
+
+      const response = await fetch(
+        `/api/organizations/${organizationId}/members`
+      );
+      if (response.ok) {
+        const members = await response.json();
+        setOrgMembers(members);
+      }
+    } catch (error) {
+      console.error("Error loading organization members:", error);
+    }
+  };
 
   const updateBoard = (newBoard) => {
     setBoard(newBoard);
@@ -26,7 +96,7 @@ export function Board({ initialBoard, onBoardChange }) {
     }
   };
 
-  const handleAddItem = (groupId) => {
+  const handleAddItem = async (groupId) => {
     const newItem = {
       id: `item-${Math.random().toString(36).substr(2, 9)}-${Date.now()}`,
       name: "New Item",
@@ -53,33 +123,90 @@ export function Board({ initialBoard, onBoardChange }) {
       };
     });
 
-    updateBoard({
+    // Get position for new item
+    const group = board.groups.find((g) => g.id === groupId);
+    const position = String(group?.items?.length || 0);
+
+    // Optimistic update
+    const updatedBoard = {
       ...board,
-      groups: board.groups.map((group) =>
-        group.id === groupId
-          ? { ...group, items: [...group.items, newItem] }
-          : group
+      groups: board.groups.map((g) =>
+        g.id === groupId ? { ...g, items: [...g.items, newItem] } : g
       ),
-    });
+    };
+    setBoard(updatedBoard);
     setEditingItem(newItem.id);
-    toast.success("Item added");
+
+    // Save to database
+    try {
+      const response = await fetch(`/api/boards/${board.id}/items`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: newItem.id,
+          groupId,
+          name: newItem.name,
+          columns: newItem.columns,
+          position,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to create item");
+      }
+
+      toast.success("Item added");
+    } catch (error) {
+      console.error("Error creating item:", error);
+      toast.error("Failed to add item");
+      // Rollback on error
+      setBoard(board);
+    }
   };
 
-  const handleAddGroup = () => {
+  const handleAddGroup = async () => {
     const newGroup = {
       id: `group-${Math.random().toString(36).substr(2, 9)}-${Date.now()}`,
       title: "New Group",
       items: [],
+      position: String(board.groups.length),
     };
-    updateBoard({
+
+    // Optimistic update
+    const updatedBoard = {
       ...board,
       groups: [...board.groups, newGroup],
-    });
-    toast.success("Group added");
+    };
+    setBoard(updatedBoard);
+
+    // Save to database
+    try {
+      const response = await fetch(`/api/boards/${board.id}/groups`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: newGroup.id,
+          title: newGroup.title,
+          position: newGroup.position,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to create group");
+      }
+
+      toast.success("Group added");
+    } catch (error) {
+      console.error("Error creating group:", error);
+      toast.error("Failed to add group");
+      // Rollback on error
+      setBoard(board);
+    }
   };
 
-  const handleUpdateItem = (groupId, itemId, field, value) => {
-    updateBoard({
+  const handleUpdateItem = async (groupId, itemId, field, value) => {
+    // Optimistic update
+    const updatedBoard = {
       ...board,
       groups: board.groups.map((group) =>
         group.id === groupId
@@ -91,11 +218,43 @@ export function Board({ initialBoard, onBoardChange }) {
             }
           : group
       ),
-    });
+    };
+    setBoard(updatedBoard);
+
+    // Save to database
+    try {
+      const response = await fetch(`/api/boards/${board.id}/items/${itemId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ [field]: value }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to update item");
+      }
+    } catch (error) {
+      console.error("Error updating item:", error);
+      toast.error("Failed to update item");
+      // Rollback on error
+      setBoard(board);
+    }
   };
 
-  const handleUpdateColumn = (itemId, columnId, value) => {
-    updateBoard({
+  const handleUpdateColumn = async (itemId, columnId, value) => {
+    // Find the item to get its current columns
+    let targetItem = null;
+    for (const group of board.groups) {
+      const item = group.items.find((i) => i.id === itemId);
+      if (item) {
+        targetItem = item;
+        break;
+      }
+    }
+
+    if (!targetItem) return;
+
+    // Optimistic update
+    const updatedBoard = {
       ...board,
       groups: board.groups.map((group) => ({
         ...group,
@@ -114,11 +273,38 @@ export function Board({ initialBoard, onBoardChange }) {
             : item
         ),
       })),
-    });
+    };
+    setBoard(updatedBoard);
+
+    // Save to database - send full columns object
+    try {
+      const updatedColumns = {
+        ...targetItem.columns,
+        [columnId]: {
+          ...targetItem.columns[columnId],
+          value,
+        },
+      };
+
+      const response = await fetch(`/api/boards/${board.id}/items/${itemId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ columns: updatedColumns }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to update column");
+      }
+    } catch (error) {
+      console.error("Error updating column:", error);
+      // Rollback on error
+      setBoard(board);
+    }
   };
 
-  const handleDeleteItem = (groupId, itemId) => {
-    updateBoard({
+  const handleDeleteItem = async (groupId, itemId) => {
+    // Optimistic update
+    const updatedBoard = {
       ...board,
       groups: board.groups.map((group) =>
         group.id === groupId
@@ -128,8 +314,26 @@ export function Board({ initialBoard, onBoardChange }) {
             }
           : group
       ),
-    });
-    toast.success("Item deleted");
+    };
+    setBoard(updatedBoard);
+
+    // Delete from database
+    try {
+      const response = await fetch(`/api/boards/${board.id}/items/${itemId}`, {
+        method: "DELETE",
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to delete item");
+      }
+
+      toast.success("Item deleted");
+    } catch (error) {
+      console.error("Error deleting item:", error);
+      toast.error("Failed to delete item");
+      // Rollback on error
+      setBoard(board);
+    }
   };
 
   const handleAddColumn = () => {
@@ -156,21 +360,66 @@ export function Board({ initialBoard, onBoardChange }) {
     toast.success("Column added");
   };
 
-  const handleUpdateGroupTitle = (groupId, title) => {
-    updateBoard({
+  const handleUpdateGroupTitle = async (groupId, title) => {
+    // Optimistic update
+    const updatedBoard = {
       ...board,
       groups: board.groups.map((group) =>
         group.id === groupId ? { ...group, title } : group
       ),
-    });
+    };
+    setBoard(updatedBoard);
+
+    // Save to database
+    try {
+      const response = await fetch(
+        `/api/boards/${board.id}/groups/${groupId}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title }),
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error("Failed to update group");
+      }
+    } catch (error) {
+      console.error("Error updating group:", error);
+      toast.error("Failed to update group");
+      // Rollback on error
+      setBoard(board);
+    }
   };
 
-  const handleDeleteGroup = (groupId) => {
-    updateBoard({
+  const handleDeleteGroup = async (groupId) => {
+    // Optimistic update
+    const updatedBoard = {
       ...board,
       groups: board.groups.filter((group) => group.id !== groupId),
-    });
-    toast.success("Group deleted");
+    };
+    setBoard(updatedBoard);
+
+    // Delete from database
+    try {
+      const response = await fetch(
+        `/api/boards/${board.id}/groups/${groupId}`,
+        {
+          method: "DELETE",
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error("Failed to delete group");
+      }
+
+      toast.success("Group deleted");
+    } catch (error) {
+      console.error("Error deleting group:", error);
+      toast.error("Failed to delete group");
+      // Rollback on error
+      setBoard(board);
+    }
   };
 
   const handleDeleteColumn = (columnId) => {
@@ -409,126 +658,362 @@ export function Board({ initialBoard, onBoardChange }) {
 
   // Collect all items and people on the board for use in cells (e.g. person suggestions)
   const allItems = board.groups.flatMap((g) => g.items);
-  const allPeopleMap = new Map();
-  board.groups.forEach((group) => {
-    group.items.forEach((item) => {
-      Object.values(item.columns || {}).forEach((col) => {
-        if (col?.type === "person" && Array.isArray(col.value)) {
-          col.value.forEach((person) => {
-            if (person?.name && !allPeopleMap.has(person.name)) {
-              allPeopleMap.set(person.name, person);
-            }
-          });
-        }
-      });
-    });
-  });
-  const allPeople = Array.from(allPeopleMap.values());
+  // Use boardPeople from database instead of extracting from items
+  const allPeople = boardPeople;
 
-  const handleCollapseAll = () => {
-    setAllExpanded(false);
+  // Check if all groups and items are currently expanded
+  const areAllExpanded = () => {
+    const allGroupIds = board.groups.map(g => g.id);
+    const allItemIds = board.groups.flatMap(g => g.items.map(i => i.id));
+    
+    const allGroupsExpanded = allGroupIds.every(id => 
+      expandCollapseState.groups[id] !== false // true or undefined (default expanded)
+    );
+    const allItemsExpanded = allItemIds.every(id => 
+      expandCollapseState.items[id] !== false // true or undefined (default expanded)
+    );
+    
+    return allGroupsExpanded && allItemsExpanded;
   };
 
-  const handleExpandAll = () => {
-    setAllExpanded(true);
+  const handleToggleExpandAll = () => {
+    const shouldExpand = !areAllExpanded();
+    
+    // Create new state objects with all groups and items set to the same state
+    const newGroupState = {};
+    const newItemState = {};
+    
+    board.groups.forEach(group => {
+      newGroupState[group.id] = shouldExpand;
+      group.items.forEach(item => {
+        newItemState[item.id] = shouldExpand;
+      });
+    });
+    
+    setExpandCollapseState({
+      groups: newGroupState,
+      items: newItemState,
+    });
+  };
+
+  const handleDragEndGroups = async (event) => {
+    const { active, over } = event;
+
+    if (!over || active.id === over.id) {
+      return;
+    }
+
+    // Check if we're dragging a group or an item
+    const isGroup = board.groups.some((g) => g.id === active.id);
+
+    if (isGroup) {
+      // Handle group reordering
+      const oldIndex = board.groups.findIndex((g) => g.id === active.id);
+      const newIndex = board.groups.findIndex((g) => g.id === over.id);
+
+      const reorderedGroups = arrayMove(board.groups, oldIndex, newIndex);
+
+      // Optimistic update
+      const updatedBoard = {
+        ...board,
+        groups: reorderedGroups,
+      };
+      setBoard(updatedBoard);
+
+      // Update positions in database
+      try {
+        await Promise.all(
+          reorderedGroups.map((group, index) =>
+            fetch(`/api/boards/${board.id}/groups/${group.id}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ position: String(index) }),
+            })
+          )
+        );
+      } catch (error) {
+        console.error("Error updating group positions:", error);
+        toast.error("Failed to save group order");
+        // Rollback on error
+        setBoard(board);
+      }
+    } else {
+      // Handle item reordering within a group
+      // Find which group contains the active item
+      let targetGroupId = null;
+      let targetGroup = null;
+
+      for (const group of board.groups) {
+        if (group.items.some((item) => item.id === active.id)) {
+          targetGroupId = group.id;
+          targetGroup = group;
+          break;
+        }
+      }
+
+      if (!targetGroupId || !targetGroup) return;
+
+      // Check if over is also an item in the same group
+      const overItemInSameGroup = targetGroup.items.some(
+        (item) => item.id === over.id
+      );
+      if (!overItemInSameGroup) return;
+
+      const oldIndex = targetGroup.items.findIndex(
+        (item) => item.id === active.id
+      );
+      const newIndex = targetGroup.items.findIndex(
+        (item) => item.id === over.id
+      );
+
+      const reorderedItems = arrayMove(targetGroup.items, oldIndex, newIndex);
+
+      // Optimistic update
+      const updatedGroups = board.groups.map((group) =>
+        group.id === targetGroupId ? { ...group, items: reorderedItems } : group
+      );
+      const updatedBoard = {
+        ...board,
+        groups: updatedGroups,
+      };
+      setBoard(updatedBoard);
+
+      // Update positions in database
+      try {
+        await fetch(`/api/boards/${board.id}/items/${active.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ position: String(newIndex) }),
+        });
+      } catch (error) {
+        console.error("Error updating item position:", error);
+        toast.error("Failed to save item order");
+        // Rollback on error
+        setBoard(board);
+      }
+    }
+  };
+
+  const handleOpenUpdates = (
+    item,
+    itemType,
+    groupId,
+    isSubitem,
+    parentItemId
+  ) => {
+    // Find parent information for breadcrumb
+    let parentGroup = null;
+    let parentItem = null;
+
+    if (groupId) {
+      parentGroup = board.groups.find((g) => g.id === groupId);
+    }
+
+    if (isSubitem && parentItemId && parentGroup) {
+      parentItem = parentGroup.items.find((i) => i.id === parentItemId);
+    }
+
+    setUpdatesSidebar({
+      item,
+      itemType,
+      groupId,
+      isSubitem,
+      parentItemId,
+      parentGroup,
+      parentItem,
+    });
+  };
+
+  const handleFocusItem = (groupId, itemId) => {
+    // Expand the group if it's collapsed
+    setExpandCollapseState(prev => ({
+      ...prev,
+      groups: {
+        ...prev.groups,
+        [groupId]: true,
+      },
+      items: {
+        ...prev.items,
+        [itemId]: true,
+      },
+    }));
+
+    // Scroll to the item after a short delay
+    setTimeout(() => {
+      const element = document.getElementById(`item-${itemId}`);
+      if (element) {
+        element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        // Highlight the item briefly
+        element.classList.add('ring-2', 'ring-blue-500', 'ring-offset-2');
+        setTimeout(() => {
+          element.classList.remove('ring-2', 'ring-blue-500', 'ring-offset-2');
+        }, 2000);
+      }
+    }, 200);
   };
 
   return (
     <div className="flex flex-col h-full bg-background">
-      {/* Board Actions Bar */}
-      <div className="flex items-center justify-end gap-2 px-6 py-3 border-b border-border">
-        <Button
-          onClick={allExpanded ? handleCollapseAll : handleExpandAll}
-          variant="outline"
-          size="sm"
-        >
-          {allExpanded ? (
-            <>
-              <ChevronRight className="h-4 w-4 mr-2" />
-              Collapse All
-            </>
-          ) : (
-            <>
-              <ChevronDown className="h-4 w-4 mr-2" />
-              Expand All
-            </>
-          )}
-        </Button>
-        <ImportDialog onImport={handleImport} />
-      </div>
+      {/* View Switcher */}
+      <ViewSwitcher currentView={currentView} onViewChange={setCurrentView} />
+
+      {/* Render different views based on currentView */}
+      {currentView === "daily-brief" ? (
+        <div className="flex-1 overflow-y-auto">
+          <DailyBriefView
+            board={board}
+            onSwitchToMain={() => setCurrentView("main")}
+            onFocusItem={handleFocusItem}
+          />
+        </div>
+      ) : (
+        <>
+          {/* Board Actions Bar */}
+          <div className="flex items-center justify-end gap-2 px-6 py-3 border-b border-border">
+            <Button
+              onClick={handleToggleExpandAll}
+              variant="outline"
+              size="sm"
+            >
+              {areAllExpanded() ? (
+                <>
+                  <ChevronRight className="h-4 w-4 mr-2" />
+                  Collapse All
+                </>
+              ) : (
+                <>
+                  <ChevronDown className="h-4 w-4 mr-2" />
+                  Expand All
+                </>
+              )}
+            </Button>
+            <ImportDialog onImport={handleImport} />
+          </div>
 
       {/* Board Content */}
       <div className="flex-1 overflow-x-auto overflow-y-auto">
-        <div className="inline-block min-w-full">
-          <table className="border-collapse">
-            <thead className="bg-white border-b-2 border-gray-200 sticky top-0 z-10">
-              <tr>
-                <th className="sticky left-0 z-20 bg-white border-r border-gray-200 px-4 py-3 text-center min-w-[200px]">
-                  <div className="flex items-center justify-center gap-2">
-                    <span className="font-semibold text-gray-700">Item</span>
-                  </div>
-                </th>
-                {board.columns.map((column) => (
-                  <ColumnHeader
-                    key={column.id}
-                    column={column}
-                    board={board}
-                    setBoard={updateBoard}
-                    isEditing={editingColumn === column.id}
-                    onEdit={() => setEditingColumn(column.id)}
-                    onEditEnd={() => setEditingColumn(null)}
-                    onDelete={handleDeleteColumn}
-                  />
-                ))}
-                <th className="bg-white border-l border-gray-200 px-4 py-3">
-                  <Button
-                    onClick={handleAddColumn}
-                    variant="ghost"
-                    size="sm"
-                    className="w-full"
-                  >
-                    <Plus className="h-4 w-4 mr-2" />
-                    Add Column
-                  </Button>
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {board.groups.map((group) => {
-                return (
-                  <Group
-                    key={group.id}
-                    group={group}
-                    columns={board.columns}
-                    allItems={allItems}
-                    allPeople={allPeople}
-                    onAddItem={() => handleAddItem(group.id)}
-                    onUpdateItem={handleUpdateItem}
-                    onUpdateColumn={handleUpdateColumn}
-                    onDeleteItem={handleDeleteItem}
-                    onUpdateGroupTitle={handleUpdateGroupTitle}
-                    onDeleteGroup={handleDeleteGroup}
-                    editingItem={editingItem}
-                    setEditingItem={setEditingItem}
-                    allExpanded={allExpanded}
-                  />
-                );
-              })}
-              <tr>
-                <td
-                  colSpan={board.columns.length + 2}
-                  className="border-t border-gray-200 px-6 py-4"
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragEnd={handleDragEndGroups}
+        >
+          <div className="inline-block min-w-full">
+            {/* Header Row */}
+            <div 
+              className="bg-white border-b-2 border-gray-200 sticky top-0 z-10"
+              style={{
+                display: 'grid',
+                gridTemplateColumns: `200px repeat(${board.columns.length}, minmax(150px, 1fr)) 100px`,
+              }}
+            >
+              <div className="sticky left-0 z-20 bg-white border-r border-gray-200 px-4 py-3 flex items-center justify-center">
+                <span className="font-semibold text-gray-700">Item</span>
+              </div>
+              {board.columns.map((column) => (
+                <ColumnHeader
+                  key={column.id}
+                  column={column}
+                  board={board}
+                  setBoard={updateBoard}
+                  isEditing={editingColumn === column.id}
+                  onEdit={() => setEditingColumn(column.id)}
+                  onEditEnd={() => setEditingColumn(null)}
+                  onDelete={handleDeleteColumn}
+                />
+              ))}
+              <div className="bg-white border-l border-gray-200 px-4 py-3">
+                <Button
+                  onClick={handleAddColumn}
+                  variant="ghost"
+                  size="sm"
+                  className="w-full"
                 >
-                  <Button onClick={handleAddGroup} variant="outline" size="sm">
-                    <Plus className="h-4 w-4 mr-2" />
-                    Add Group
-                  </Button>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+                  <Plus className="h-4 w-4 mr-2" />
+                  Add Column
+                </Button>
+              </div>
+            </div>
+
+            {/* Groups and Items */}
+            <div>
+              {board.groups.map((group) => (
+                <Group
+                  key={group.id}
+                  group={group}
+                  columns={board.columns}
+                  allItems={allItems}
+                  allPeople={allPeople}
+                  orgMembers={orgMembers}
+                  boardId={board.id}
+                  onPersonAdded={loadPeople}
+                  onAddItem={() => handleAddItem(group.id)}
+                  onUpdateItem={handleUpdateItem}
+                  onUpdateColumn={handleUpdateColumn}
+                  onDeleteItem={handleDeleteItem}
+                  onUpdateGroupTitle={handleUpdateGroupTitle}
+                  onDeleteGroup={handleDeleteGroup}
+                  editingItem={editingItem}
+                  setEditingItem={setEditingItem}
+                  isCollapsed={expandCollapseState.groups[group.id] === false}
+                  onToggleCollapse={() => {
+                    const currentlyCollapsed = expandCollapseState.groups[group.id] === false;
+                    setExpandCollapseState(prev => ({
+                      ...prev,
+                      groups: {
+                        ...prev.groups,
+                        [group.id]: currentlyCollapsed ? true : false,
+                      },
+                    }));
+                  }}
+                  itemExpandState={expandCollapseState.items}
+                  onItemToggleExpand={(itemId, expanded) => {
+                    setExpandCollapseState(prev => ({
+                      ...prev,
+                      items: {
+                        ...prev.items,
+                        [itemId]: expanded,
+                      },
+                    }));
+                  }}
+                  onOpenUpdates={handleOpenUpdates}
+                  boardId={board.id}
+                />
+              ))}
+
+              {/* Add Group Button */}
+              <div 
+                className="border-t border-gray-200 px-6 py-4"
+                style={{
+                  gridColumn: `1 / span ${board.columns.length + 2}`,
+                }}
+              >
+                <Button
+                  onClick={handleAddGroup}
+                  variant="outline"
+                  size="sm"
+                >
+                  <Plus className="h-4 w-4 mr-2" />
+                  Add Group
+                </Button>
+              </div>
+            </div>
+          </div>
+        </DndContext>
       </div>
+        </>
+      )}
+
+      {/* Updates Sidebar */}
+      {updatesSidebar && (
+        <UpdatesSidebar
+          item={updatesSidebar.item}
+          itemType={updatesSidebar.itemType}
+          boardId={board.id}
+          parentGroup={updatesSidebar.parentGroup}
+          parentItem={updatesSidebar.parentItem}
+          onClose={() => setUpdatesSidebar(null)}
+        />
+      )}
     </div>
   );
 }

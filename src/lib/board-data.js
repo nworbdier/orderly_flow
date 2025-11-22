@@ -8,6 +8,7 @@ export const COLUMN_TYPES = {
   FILES: "files",
   LINK: "link",
   TIME_TRACKER: "time_tracker",
+  UPDATES: "updates",
 };
 
 export const STATUS_OPTIONS = [
@@ -21,6 +22,7 @@ export const STATUS_OPTIONS = [
 // Default columns for new boards
 export const DEFAULT_COLUMNS = [
   { id: "col-person", title: "Person", type: COLUMN_TYPES.PERSON },
+  { id: "col-updates", title: "Updates", type: COLUMN_TYPES.UPDATES },
   { id: "col-status", title: "Status", type: COLUMN_TYPES.STATUS },
   { id: "col-date", title: "Date", type: COLUMN_TYPES.DATE },
   { id: "col-files", title: "Files", type: COLUMN_TYPES.FILES },

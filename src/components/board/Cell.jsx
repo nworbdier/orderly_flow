@@ -37,8 +37,11 @@ import {
   Play,
   Pause,
   RotateCcw,
+  MessageSquare,
 } from "lucide-react";
+import { useUpdateCount } from "@/hooks/use-updates";
 import { format, parseISO } from "date-fns";
+import { toast } from "sonner";
 
 export function Cell({
   item,
@@ -48,6 +51,11 @@ export function Cell({
   isEditing,
   allItems,
   allPeople,
+  orgMembers,
+  onOpenUpdates,
+  boardId,
+  onPersonAdded,
+  itemType = "item", // "item" or "subitem"
 }) {
   const handleChange = (newValue) => {
     onUpdate(newValue);
@@ -94,6 +102,9 @@ export function Cell({
             value={value}
             onChange={handleChange}
             allPeople={allPeople}
+            orgMembers={orgMembers}
+            boardId={boardId}
+            onPersonAdded={onPersonAdded}
           />
         );
 
@@ -240,6 +251,16 @@ export function Cell({
       case "time_tracker":
         return <TimeTrackerCell value={value} onChange={handleChange} />;
 
+      case "updates":
+        return (
+          <UpdatesCell
+            item={item}
+            boardId={boardId}
+            itemType={itemType}
+            onOpenUpdates={onOpenUpdates}
+          />
+        );
+
       default:
         return (
           <div className="w-full flex justify-center">
@@ -255,14 +276,14 @@ export function Cell({
   };
 
   return (
-    <td
-      className="border-r border-gray-200 px-4 py-3 min-w-[150px] text-center align-middle"
+    <div
+      className="border-r border-gray-200 px-4 py-3 min-w-[150px] text-center flex items-center"
       style={column.width ? { width: column.width } : undefined}
     >
       <div className="flex items-center justify-center w-full">
         {renderCell()}
       </div>
-    </td>
+    </div>
   );
 }
 
@@ -291,7 +312,7 @@ const getRandomColor = () => {
 };
 
 // PersonCell component for handling multiple people
-function PersonCell({ value, onChange, allPeople = [] }) {
+function PersonCell({ value, onChange, allPeople = [], orgMembers = [], boardId, onPersonAdded }) {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [people, setPeople] = useState(() => {
     // Handle both old string format and new array format
@@ -305,26 +326,109 @@ function PersonCell({ value, onChange, allPeople = [] }) {
   });
   const [newPersonName, setNewPersonName] = useState("");
 
-  // Derive suggested people from allPeople minus already selected
+  // Derive suggested people from allPeople that are also org members
   const selectedNames = new Set(people.map((p) => p.name));
-  const suggestedPeople =
-    Array.isArray(allPeople) && allPeople.length > 0
-      ? allPeople.filter((p) => p?.name && !selectedNames.has(p.name))
-      : [];
+  const selectedEmails = new Set(people.map((p) => p.email?.toLowerCase()).filter(Boolean));
+  
+  // Create a map of org members by email for quick lookup
+  const orgMemberMap = new Map();
+  orgMembers.forEach((m) => {
+    if (m.userEmail) {
+      orgMemberMap.set(m.userEmail.toLowerCase(), m);
+    }
+  });
+  
+  // Get people from allPeople that match org members
+  const peopleFromAllPeople = Array.isArray(allPeople) && allPeople.length > 0
+    ? allPeople.filter((p) => {
+        if (!p?.name || selectedNames.has(p.name)) return false;
+        const personEmail = p.email?.toLowerCase();
+        return personEmail && orgMemberMap.has(personEmail);
+      })
+    : [];
+  
+  // Get org members that aren't already in allPeople or selected
+  const orgMembersNotInPeople = orgMembers
+    .filter((m) => {
+      if (!m.userName || !m.userEmail) return false;
+      const email = m.userEmail.toLowerCase();
+      const name = m.userName.toLowerCase();
+      // Skip if already selected
+      if (selectedNames.has(m.userName) || selectedEmails.has(email)) return false;
+      // Skip if already in allPeople
+      const existsInAllPeople = allPeople?.some(
+        (p) => p.email?.toLowerCase() === email || p.name?.toLowerCase() === name
+      );
+      return !existsInAllPeople;
+    })
+    .map((m) => ({
+      id: `org-member-${m.userId}`,
+      name: m.userName,
+      email: m.userEmail,
+      color: getRandomColor(),
+      isOrgMember: true, // Flag to indicate this is from org, not saved person yet
+    }));
+  
+  // Combine both sources
+  const suggestedPeople = [...peopleFromAllPeople, ...orgMembersNotInPeople];
 
-  const handleAddPerson = () => {
+  const handleAddPerson = async () => {
     if (!newPersonName.trim()) return;
 
+    // Check if the person name matches an organization member
+    const matchingMember = orgMembers.find(
+      (m) => m.userName?.toLowerCase() === newPersonName.trim().toLowerCase()
+    );
+
+    if (!matchingMember) {
+      toast.error("Only organization members can be added as people");
+      return;
+    }
+
+    const personId = `person-${Date.now()}`;
     const newPerson = {
-      id: Date.now().toString(),
+      id: personId,
       name: newPersonName.trim(),
+      email: matchingMember.userEmail,
       color: getRandomColor(),
     };
 
-    const updatedPeople = [...people, newPerson];
-    setPeople(updatedPeople);
-    onChange(updatedPeople);
-    setNewPersonName("");
+    console.log("Adding person to database:", newPerson, "boardId:", boardId);
+
+    // Save to database
+    try {
+      const response = await fetch(`/api/boards/${boardId}/people`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(newPerson),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        console.error("Failed to save person:", error);
+        toast.error(`Failed to save person: ${error.details || error.error}`);
+        return;
+      }
+
+      const savedPerson = await response.json();
+      console.log("Person saved successfully:", savedPerson);
+
+      // Refresh the people list
+      if (onPersonAdded) {
+        await onPersonAdded();
+      }
+
+      // Update local state with saved person
+      const updatedPeople = [...people, savedPerson];
+      setPeople(updatedPeople);
+      onChange(updatedPeople);
+      setNewPersonName("");
+      
+      toast.success("Person added and saved!");
+    } catch (error) {
+      console.error("Error saving person:", error);
+      toast.error("Failed to save person");
+    }
   };
 
   const handleDeletePerson = (personId) => {
@@ -341,11 +445,46 @@ function PersonCell({ value, onChange, allPeople = [] }) {
     onChange(updatedPeople);
   };
 
-  const handleSelectSuggestedPerson = (person) => {
+  const handleSelectSuggestedPerson = async (person) => {
     if (!person || !person.name || selectedNames.has(person.name)) return;
-    const updated = [...people, person];
-    setPeople(updated);
-    onChange(updated);
+    
+    // If this is an org member that hasn't been saved yet, save it first
+    if (person.isOrgMember) {
+      try {
+        const response = await fetch(`/api/boards/${boardId}/people`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: person.id,
+            name: person.name,
+            email: person.email,
+            color: person.color,
+          }),
+        });
+
+        if (response.ok) {
+          const savedPerson = await response.json();
+          // Refresh the people list
+          if (onPersonAdded) {
+            await onPersonAdded();
+          }
+          const updated = [...people, savedPerson];
+          setPeople(updated);
+          onChange(updated);
+          toast.success("Person added!");
+        } else {
+          toast.error("Failed to save person");
+        }
+      } catch (error) {
+        console.error("Error saving person:", error);
+        toast.error("Failed to save person");
+      }
+    } else {
+      // Already saved person, just add to selection
+      const updated = [...people, person];
+      setPeople(updated);
+      onChange(updated);
+    }
   };
 
   return (
@@ -585,5 +724,42 @@ function TimeTrackerCell({ value, onChange }) {
         </Button>
       </div>
     </div>
+  );
+}
+
+// UpdatesCell component for displaying update count
+function UpdatesCell({ item, boardId, itemType = "item", onOpenUpdates }) {
+  const { count, isLoading, refresh } = useUpdateCount(boardId, item.id, itemType);
+
+  // Listen for update changes and refresh count
+  useEffect(() => {
+    const handleUpdatesChanged = (event) => {
+      const { boardId: changedBoardId, itemId: changedItemId, itemType: changedItemType } = event.detail;
+      if (changedBoardId === boardId && changedItemId === item.id && changedItemType === itemType) {
+        refresh();
+      }
+    };
+
+    window.addEventListener('updatesChanged', handleUpdatesChanged);
+    return () => window.removeEventListener('updatesChanged', handleUpdatesChanged);
+  }, [boardId, item.id, itemType, refresh]);
+
+  return (
+    <Button
+      variant="ghost"
+      className="h-8 w-full hover:bg-muted/50 flex items-center justify-center gap-2 relative"
+      onClick={() => onOpenUpdates && onOpenUpdates(item)}
+      disabled={isLoading}
+    >
+      <MessageSquare className="h-4 w-4 text-muted-foreground" />
+      {!isLoading && count > 0 && (
+        <Badge
+          variant="secondary"
+          className="absolute -top-1 -right-1 h-5 min-w-5 px-1 text-xs flex items-center justify-center rounded-full bg-blue-500 text-white"
+        >
+          {count}
+        </Badge>
+      )}
+    </Button>
   );
 }

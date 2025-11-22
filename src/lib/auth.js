@@ -33,10 +33,11 @@ export const auth = betterAuth({
       membershipLimit: 100,
       sendInvitationEmail: async (data) => {
         // TODO: Implement email sending
+        const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
         console.log("Invitation email would be sent to:", data.email);
         console.log(
           "Invitation link:",
-          `${process.env.NEXT_PUBLIC_APP_URL}/accept-invitation/${data.id}`
+          `${baseUrl}/accept-invitation/${data.id}`
         );
       },
     }),

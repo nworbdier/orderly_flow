@@ -104,7 +104,7 @@ export const invitation = pgTable("invitation", {
     .notNull(),
 });
 
-// Board tables for project management
+// Board table - stores boards with column definitions
 export const board = pgTable("board", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
@@ -118,6 +118,7 @@ export const board = pgTable("board", {
     .notNull(),
 });
 
+// Board group table - groups within boards
 export const boardGroup = pgTable("board_group", {
   id: text("id").primaryKey(),
   boardId: text("board_id")
@@ -131,13 +132,80 @@ export const boardGroup = pgTable("board_group", {
     .notNull(),
 });
 
+// Board item table - items within groups
 export const boardItem = pgTable("board_item", {
   id: text("id").primaryKey(),
+  boardId: text("board_id")
+    .notNull()
+    .references(() => board.id, { onDelete: "cascade" }),
   groupId: text("group_id")
     .notNull()
     .references(() => boardGroup.id, { onDelete: "cascade" }),
-  data: jsonb("data").notNull(), // Store all item data (cells, values, etc.)
+  name: text("name").notNull(),
+  columns: jsonb("columns").notNull(), // Column data for this item
   position: text("position").notNull(), // For ordering
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at")
+    .$onUpdate(() => /* @__PURE__ */ new Date())
+    .notNull(),
+});
+
+// Board subitem table - subitems within items
+export const boardSubitem = pgTable("board_subitem", {
+  id: text("id").primaryKey(),
+  boardId: text("board_id")
+    .notNull()
+    .references(() => board.id, { onDelete: "cascade" }),
+  itemId: text("item_id")
+    .notNull()
+    .references(() => boardItem.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  columns: jsonb("columns").notNull(), // Column data for this subitem
+  position: text("position").notNull(), // For ordering
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at")
+    .$onUpdate(() => /* @__PURE__ */ new Date())
+    .notNull(),
+});
+
+// Updates table - stores updates for groups/items/subitems with proper foreign keys
+export const update = pgTable("update", {
+  id: text("id").primaryKey(),
+  boardId: text("board_id")
+    .notNull()
+    .references(() => board.id, { onDelete: "cascade" }),
+
+  // Separate nullable foreign keys for each entity type
+  // Only ONE of these should be set based on itemType
+  groupId: text("group_id").references(() => boardGroup.id, {
+    onDelete: "cascade",
+  }),
+  itemId: text("item_id").references(() => boardItem.id, {
+    onDelete: "cascade",
+  }),
+  subitemId: text("subitem_id").references(() => boardSubitem.id, {
+    onDelete: "cascade",
+  }),
+
+  itemType: text("item_type").notNull(), // "group", "item", or "subitem"
+  message: text("message").notNull(),
+  authorId: text("author_id")
+    .notNull()
+    .references(() => user.id, { onDelete: "cascade" }),
+  authorName: text("author_name").notNull(),
+  authorEmail: text("author_email").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// Person table - stores people that can be assigned across boards
+export const person = pgTable("person", {
+  id: text("id").primaryKey(),
+  boardId: text("board_id")
+    .notNull()
+    .references(() => board.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  email: text("email"),
+  color: text("color").notNull(), // For avatar color
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at")
     .$onUpdate(() => /* @__PURE__ */ new Date())

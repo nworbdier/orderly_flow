@@ -18,17 +18,15 @@ import {
 import { authClient } from "@/lib/auth-client";
 import { Skeleton } from "@/components/ui/skeleton";
 
-const STORAGE_KEY = "orderly_flow_boards";
-const CURRENT_BOARD_KEY = "orderly_flow_current_board";
-
 export default function Home() {
   const router = useRouter();
   const { data: session } = authClient.useSession();
   const { data: activeOrg, isPending: isOrgLoading } =
     authClient.useActiveOrganization();
   const [mounted, setMounted] = useState(false);
-  const [boards, setBoards] = useState(createInitialBoards());
+  const [boards, setBoards] = useState([]);
   const [currentBoardId, setCurrentBoardId] = useState(null);
+  const [isLoadingBoards, setIsLoadingBoards] = useState(true);
 
   // Check if user has an active organization
   useEffect(() => {
@@ -38,72 +36,148 @@ export default function Home() {
     }
   }, [session, activeOrg, isOrgLoading, router]);
 
-  // Load from localStorage only after mounting (client-side only)
+  // Fetch boards from database
   useEffect(() => {
-    setMounted(true);
+    if (activeOrg && session) {
+      setIsLoadingBoards(true);
 
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) {
-      try {
-        const parsedBoards = JSON.parse(saved);
-        setBoards(parsedBoards);
+      // Fetch all data: boards, groups, items, subitems
+      Promise.all([
+        fetch("/api/boards").then((res) => res.json()),
+        // We'll fetch groups, items, subitems for the first board initially
+      ])
+        .then(async ([boardsData]) => {
+          if (boardsData.boards && boardsData.boards.length > 0) {
+            // For each board, fetch its groups, items, and subitems
+            const boardsWithData = await Promise.all(
+              boardsData.boards.map(async (board) => {
+                try {
+                  // Fetch groups, items, and subitems in parallel
+                  const [groupsRes, itemsRes, subitemsRes] = await Promise.all([
+                    fetch(`/api/boards/${board.id}/groups`),
+                    fetch(`/api/boards/${board.id}/items`),
+                    fetch(`/api/boards/${board.id}/subitems`),
+                  ]);
 
-        const savedBoardId = localStorage.getItem(CURRENT_BOARD_KEY);
-        setCurrentBoardId(savedBoardId || parsedBoards[0]?.id || null);
-      } catch (e) {
-        console.error("Failed to parse saved boards:", e);
-        setCurrentBoardId(boards[0]?.id || null);
-      }
-    } else {
-      setCurrentBoardId(boards[0]?.id || null);
+                  const groupsData = await groupsRes.json();
+                  const itemsData = await itemsRes.json();
+                  const subitemsData = await subitemsRes.json();
+
+                  const groups = groupsData.groups || [];
+                  const items = itemsData.items || [];
+                  const subitems = subitemsData.subitems || [];
+
+                  // Build the hierarchy: groups > items > subitems
+                  const groupsWithItems = groups.map((group) => ({
+                    ...group,
+                    items: items
+                      .filter((item) => item.groupId === group.id)
+                      .map((item) => ({
+                        ...item,
+                        subitems: subitems.filter(
+                          (subitem) => subitem.itemId === item.id
+                        ),
+                      })),
+                  }));
+
+                  return {
+                    ...board,
+                    groups: groupsWithItems,
+                  };
+                } catch (error) {
+                  console.error(
+                    `Error fetching data for board ${board.id}:`,
+                    error
+                  );
+                  return {
+                    ...board,
+                    groups: [],
+                  };
+                }
+              })
+            );
+
+            setBoards(boardsWithData);
+
+            // Always select the first board
+            if (boardsWithData.length > 0) {
+              setCurrentBoardId(boardsWithData[0].id);
+            }
+          }
+        })
+        .catch((error) => {
+          console.error("Error fetching boards:", error);
+        })
+        .finally(() => {
+          setIsLoadingBoards(false);
+          setMounted(true);
+        });
     }
-  }, []);
+  }, [activeOrg, session]);
 
-  // Save boards to localStorage whenever they change (only after mounting)
-  useEffect(() => {
-    if (mounted) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(boards));
-    }
-  }, [boards, mounted]);
-
-  // Save current board ID to localStorage whenever it changes (only after mounting)
-  useEffect(() => {
-    if (mounted && currentBoardId) {
-      localStorage.setItem(CURRENT_BOARD_KEY, currentBoardId);
-    }
-  }, [currentBoardId, mounted]);
+  // No localStorage - board selection is ephemeral per session
 
   const currentBoard = boards.find((b) => b.id === currentBoardId);
 
-  const handleAddBoard = (name) => {
-    const newBoard = {
-      id: `board-${Math.random().toString(36).substr(2, 9)}-${Date.now()}`,
-      name,
-      groups: [],
-      columns: DEFAULT_COLUMNS.map((col) => ({
+  const handleAddBoard = async (name) => {
+    try {
+      const columns = DEFAULT_COLUMNS.map((col) => ({
         ...col,
         id: `${col.id}-${Math.random()
           .toString(36)
           .substr(2, 9)}-${Date.now()}`,
-      })),
-    };
-    setBoards([...boards, newBoard]);
-    setCurrentBoardId(newBoard.id);
+      }));
+
+      const response = await fetch("/api/boards", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, columns }),
+      });
+
+      const data = await response.json();
+      if (data.board) {
+        setBoards([...boards, data.board]);
+        setCurrentBoardId(data.board.id);
+      }
+    } catch (error) {
+      console.error("Error creating board:", error);
+    }
   };
 
-  const handleUpdateBoard = (boardId, name) => {
-    setBoards(
-      boards.map((board) => (board.id === boardId ? { ...board, name } : board))
-    );
+  const handleUpdateBoard = async (boardId, name) => {
+    try {
+      const response = await fetch(`/api/boards/${boardId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+
+      const data = await response.json();
+      if (data.board) {
+        setBoards(
+          boards.map((board) => (board.id === boardId ? data.board : board))
+        );
+      }
+    } catch (error) {
+      console.error("Error updating board:", error);
+    }
   };
 
-  const handleDeleteBoard = (boardId) => {
-    const updatedBoards = boards.filter((board) => board.id !== boardId);
-    setBoards(updatedBoards);
-    if (currentBoardId === boardId && updatedBoards.length > 0) {
-      setCurrentBoardId(updatedBoards[0].id);
-    } else if (updatedBoards.length === 0) {
-      setCurrentBoardId(null);
+  const handleDeleteBoard = async (boardId) => {
+    try {
+      await fetch(`/api/boards/${boardId}`, {
+        method: "DELETE",
+      });
+
+      const updatedBoards = boards.filter((board) => board.id !== boardId);
+      setBoards(updatedBoards);
+      if (currentBoardId === boardId && updatedBoards.length > 0) {
+        setCurrentBoardId(updatedBoards[0].id);
+      } else if (updatedBoards.length === 0) {
+        setCurrentBoardId(null);
+      }
+    } catch (error) {
+      console.error("Error deleting board:", error);
     }
   };
 
@@ -157,12 +231,22 @@ export default function Home() {
     );
   };
 
-  const handleBoardChange = (updatedBoard) => {
+  const handleBoardChange = async (updatedBoard) => {
+    // Update local state immediately for responsive UI
     setBoards(
       boards.map((board) =>
         board.id === updatedBoard.id ? updatedBoard : board
       )
     );
+
+    // TODO: Implement saving with new relational API endpoints
+    // For now, changes are stored in memory only
+    // Need to call individual endpoints for groups, items, subitems
+    console.log("Board changed (not yet persisted to database):", {
+      boardId: updatedBoard.id,
+      groupCount: updatedBoard.groups?.length,
+      columns: updatedBoard.columns?.length,
+    });
   };
 
   const handleReorderBoards = (fromIndex, toIndex) => {
@@ -183,8 +267,8 @@ export default function Home() {
     });
   };
 
-  // Show loading state while checking organization
-  if (isOrgLoading) {
+  // Show loading state while checking organization or loading boards
+  if (isOrgLoading || isLoadingBoards) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <div className="text-center space-y-4">

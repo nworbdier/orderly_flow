@@ -93,11 +93,11 @@ export function ColumnHeader({
     event.preventDefault();
     event.stopPropagation();
 
-    const th = event.currentTarget.closest("th");
-    if (!th) return;
+    const div = event.currentTarget.closest("div.column-header");
+    if (!div) return;
 
     const startX = event.clientX;
-    const startWidth = column.width || th.getBoundingClientRect().width || 150;
+    const startWidth = column.width || div.getBoundingClientRect().width || 150;
 
     const handleMouseMove = (moveEvent) => {
       const deltaX = moveEvent.clientX - startX;
@@ -123,8 +123,8 @@ export function ColumnHeader({
   };
 
   return (
-    <th
-      className="relative bg-white border-r border-gray-200 px-4 py-3 text-center min-w-[150px] select-none"
+    <div
+      className="column-header relative bg-white border-r border-gray-200 px-4 py-3 text-center min-w-[150px] select-none"
       style={column.width ? { width: column.width } : undefined}
     >
       <div className="flex items-center justify-center gap-2">
@@ -198,6 +198,6 @@ export function ColumnHeader({
         onMouseDown={handleResizeMouseDown}
         className="absolute top-0 right-0 h-full w-1 cursor-col-resize hover:bg-gray-200"
       />
-    </th>
+    </div>
   );
 }
