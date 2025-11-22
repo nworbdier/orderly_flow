@@ -8,14 +8,14 @@ export async function GET(request, { params }) {
   try {
     const { boardId } = await params;
 
-    console.log("Fetching people for board:", boardId);
+    // console.log("Fetching people for board:", boardId);
 
     const people = await db
       .select()
       .from(person)
       .where(eq(person.boardId, boardId));
 
-    console.log("Found people:", people);
+    // console.log("Found people:", people);
 
     return NextResponse.json(people);
   } catch (error) {
@@ -47,7 +47,7 @@ export async function POST(request, { params }) {
       })
       .returning();
 
-    console.log("Created person:", newPerson[0]);
+    // console.log("Created person:", newPerson[0]);
 
     return NextResponse.json(newPerson[0]);
   } catch (error) {
@@ -58,4 +58,3 @@ export async function POST(request, { params }) {
     );
   }
 }
-
