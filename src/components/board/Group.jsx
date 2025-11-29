@@ -8,6 +8,8 @@ import {
   Trash2,
   MessageSquare,
   GripVertical,
+  CheckSquare,
+  Square,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -22,7 +24,11 @@ import { Item } from "./Item";
 import { useUpdateCount } from "@/hooks/use-updates";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import {
+  SortableContext,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { cn } from "@/lib/utils";
 
 export function Group({
   group,
@@ -45,6 +51,9 @@ export function Group({
   itemExpandState,
   onItemToggleExpand,
   onOpenUpdates,
+  selectedItems = [],
+  onSelectItem,
+  onOpenItemDetail,
 }) {
   const [groupTitle, setGroupTitle] = useState(group.title);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
@@ -70,6 +79,24 @@ export function Group({
     onUpdateGroupTitle(group.id, groupTitle);
   };
 
+  // Check if all items in group are selected
+  const allGroupItemsSelected =
+    group.items.length > 0 &&
+    group.items.every((item) => selectedItems.includes(item.id));
+  const someGroupItemsSelected = group.items.some((item) =>
+    selectedItems.includes(item.id)
+  );
+
+  const handleSelectAllGroupItems = () => {
+    if (allGroupItemsSelected) {
+      // Deselect all
+      group.items.forEach((item) => onSelectItem?.(item.id, false));
+    } else {
+      // Select all
+      group.items.forEach((item) => onSelectItem?.(item.id, true));
+    }
+  };
+
   return (
     <div>
       {/* Group Header Row */}
@@ -77,13 +104,36 @@ export function Group({
         ref={setNodeRef}
         style={{
           ...style,
-          display: 'grid',
+          display: "grid",
           gridTemplateColumns: `200px repeat(${columns.length}, minmax(150px, 1fr)) 100px`,
         }}
         className="bg-gray-100 border-b border-gray-200"
       >
         <div className="sticky left-0 z-10 bg-gray-100 border-r border-gray-200 px-4 py-2">
           <div className="flex items-center gap-2">
+            {/* Group Select Checkbox */}
+            {onSelectItem && (
+              <button
+                onClick={handleSelectAllGroupItems}
+                className={cn(
+                  "p-0.5 rounded hover:bg-gray-200 transition-colors shrink-0",
+                  someGroupItemsSelected && "text-primary"
+                )}
+              >
+                {allGroupItemsSelected ? (
+                  <CheckSquare className="h-4 w-4" />
+                ) : someGroupItemsSelected ? (
+                  <div className="relative">
+                    <Square className="h-4 w-4" />
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <div className="h-2 w-2 bg-primary rounded-sm" />
+                    </div>
+                  </div>
+                ) : (
+                  <Square className="h-4 w-4 text-gray-400" />
+                )}
+              </button>
+            )}
             {/* Drag Handle */}
             <button
               {...attributes}
@@ -121,6 +171,10 @@ export function Group({
                   >
                     {group.title}
                   </button>
+                  {/* Item count badge */}
+                  <Badge variant="secondary" className="text-xs">
+                    {group.items.length}
+                  </Badge>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
@@ -177,6 +231,7 @@ export function Group({
               key={item.id}
               item={item}
               groupId={group.id}
+              group={group}
               columns={columns}
               allItems={allItems}
               allPeople={allPeople}
@@ -188,10 +243,15 @@ export function Group({
               onEdit={() => setEditingItem(item.id)}
               onEditEnd={() => setEditingItem(null)}
               isExpanded={itemExpandState[item.id] !== false}
-              onToggleExpand={(expanded) => onItemToggleExpand(item.id, expanded)}
+              onToggleExpand={(expanded) =>
+                onItemToggleExpand(item.id, expanded)
+              }
               onOpenUpdates={onOpenUpdates}
               boardId={boardId}
               onPersonAdded={onPersonAdded}
+              isSelected={selectedItems.includes(item.id)}
+              onSelect={(selected) => onSelectItem?.(item.id, selected)}
+              onOpenItemDetail={onOpenItemDetail}
             />
           ))}
         </SortableContext>
@@ -201,7 +261,7 @@ export function Group({
       {!isCollapsed && (
         <div
           style={{
-            display: 'grid',
+            display: "grid",
             gridTemplateColumns: `200px repeat(${columns.length}, minmax(150px, 1fr)) 100px`,
           }}
         >

@@ -1,6 +1,15 @@
 "use client";
 
-import { Trash2, MoreVertical, Plus, GripVertical } from "lucide-react";
+import {
+  Trash2,
+  MoreVertical,
+  Plus,
+  GripVertical,
+  CheckSquare,
+  Square,
+  ExternalLink,
+  Copy,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -14,12 +23,23 @@ import { toast } from "sonner";
 import { useState } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
-import { DndContext, closestCenter, PointerSensor, KeyboardSensor, useSensor, useSensors } from "@dnd-kit/core";
+import {
+  SortableContext,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  KeyboardSensor,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
 
 export function Item({
   item,
   groupId,
+  group,
   columns,
   allItems,
   allPeople,
@@ -35,6 +55,9 @@ export function Item({
   onOpenUpdates,
   boardId,
   onPersonAdded,
+  isSelected = false,
+  onSelect,
+  onOpenItemDetail,
 }) {
   const [itemName, setItemName] = useState(item.name);
   const [isEditingName, setIsEditingName] = useState(false);
@@ -284,13 +307,33 @@ export function Item({
         ref={setNodeRef}
         style={{
           ...style,
-          display: 'grid',
+          display: "grid",
           gridTemplateColumns: `200px repeat(${columns.length}, minmax(150px, 1fr)) 100px`,
         }}
         className="bg-white border-b border-gray-200 hover:bg-gray-50"
       >
-        <div className="sticky left-0 z-10 bg-white border-r border-gray-200 px-4 py-3">
+        <div
+          className={`sticky left-0 z-10 bg-white border-r border-gray-200 px-4 py-3 ${
+            isSelected ? "bg-blue-50" : ""
+          }`}
+        >
           <div className="flex items-center gap-2">
+            {/* Selection Checkbox */}
+            {onSelect && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSelect(!isSelected);
+                }}
+                className="p-0.5 rounded hover:bg-gray-200 transition-colors shrink-0"
+              >
+                {isSelected ? (
+                  <CheckSquare className="h-4 w-4 text-primary" />
+                ) : (
+                  <Square className="h-4 w-4 text-gray-400" />
+                )}
+              </button>
+            )}
             {/* Drag Handle */}
             <button
               {...attributes}
@@ -321,6 +364,7 @@ export function Item({
             ) : (
               <button
                 onClick={() => setIsEditingName(true)}
+                onDoubleClick={() => onOpenItemDetail?.(item, group)}
                 className="flex-1 text-left text-gray-900 hover:bg-gray-100 px-2 py-1 rounded flex items-center gap-2"
               >
                 <span>{item.name}</span>
@@ -338,6 +382,21 @@ export function Item({
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
+                <DropdownMenuItem
+                  onClick={() => onOpenItemDetail?.(item, group)}
+                >
+                  <ExternalLink className="h-4 w-4 mr-2" />
+                  Open details
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => {
+                    navigator.clipboard.writeText(item.name);
+                    toast.success("Item name copied");
+                  }}
+                >
+                  <Copy className="h-4 w-4 mr-2" />
+                  Copy name
+                </DropdownMenuItem>
                 <DropdownMenuItem
                   onClick={() => onDeleteItem(groupId, item.id)}
                   className="text-red-600"
@@ -416,7 +475,7 @@ export function Item({
       {isExpanded && (
         <div
           style={{
-            display: 'grid',
+            display: "grid",
             gridTemplateColumns: `200px repeat(${columns.length}, minmax(150px, 1fr)) 100px`,
           }}
           className="bg-gray-50 border-b border-gray-100"
@@ -486,7 +545,7 @@ function SubitemRow({
       ref={setNodeRef}
       style={{
         ...style,
-        display: 'grid',
+        display: "grid",
         gridTemplateColumns: `200px repeat(${columns.length}, minmax(150px, 1fr)) 100px`,
       }}
       className="bg-gray-50 border-b border-gray-100"
